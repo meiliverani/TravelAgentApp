@@ -42,34 +42,52 @@ namespace TravelAgentApp.Controllers
         {
             if(booking.Id == 0)
             {
-                var productInv = _context.Inventories.Where(x => x.ProductId == booking.ProductId &&
-                    x.StartValidDate <= booking.BookingStartDate && x.EndValidDate >= booking.BookingStartDate &&
-                    x.StartValidDate <= booking.BookingEndDate && x.EndValidDate >= booking.BookingEndDate)
-                    .OrderBy(x=>x.InventoryDate).LastOrDefault();
+                List<Inventory> productInventories = _context.Inventories.Where(x => x.ProductId == booking.ProductId && x.Qty > 0).ToList();
 
-                if(productInv != null)
+                if(productInventories.Count > 0)
                 {
-                    //check qty availability
-                    var inventoryQty = productInv.Qty;
-                    var bookedProductQty = _context.Bookings.Where(x => x.ProductId == booking.ProductId &&
-                        productInv.StartValidDate <= x.BookingStartDate && productInv.EndValidDate >= x.BookingStartDate &&
-                        productInv.StartValidDate <= x.BookingEndDate && productInv.EndValidDate >= x.BookingEndDate
-                        && x.BookingStatusId == 2).Count();
-                    bool isAvailable = inventoryQty - bookedProductQty >= booking.Qty;
+                    var tempBookingQty = booking.Qty;
 
-                    if (isAvailable)
+                    foreach (var inv in productInventories)
                     {
-                        _context.Bookings.Add(booking);
-                        productInv.Qty = productInv.Qty - 1; //consume inventory qty
+                        bool isStartDateValid = inv.StartValidDate <= booking.BookingStartDate;
+                        bool isEndDateValid = inv.EndValidDate >= booking.BookingEndDate;
+                        var bookedProducts = _context.Bookings.Where(x => x.ProductId == booking.ProductId &&
+                                (inv.StartValidDate <= x.BookingStartDate && inv.EndValidDate >= x.BookingEndDate) &&
+                                x.BookingStatusId == 2).ToList();
+                        var bookedProducstQty = bookedProducts.Sum(x => x.Qty);
 
+                        if(bookedProducstQty < inv.Qty)
+                        {
+                            if (isStartDateValid && !isEndDateValid) tempBookingQty = Convert.ToInt32(inv.EndValidDate.Value.Subtract(booking.BookingStartDate).TotalDays);
+                            if (!isStartDateValid && isEndDateValid) tempBookingQty = Convert.ToInt32(booking.BookingEndDate.Subtract(inv.StartValidDate.Value).TotalDays);
+
+                            if (tempBookingQty > 0)
+                            {
+                                var bookedQty = tempBookingQty;
+
+                                if (productInventories.Sum(x => x.Qty) >= tempBookingQty)
+                                {
+                                    if (tempBookingQty >= inv.Qty)
+                                    {
+                                        tempBookingQty = tempBookingQty - inv.Qty;
+                                        inv.Qty = inv.Qty - bookedQty;
+                                    }
+                                    else
+                                    {
+                                        inv.Qty = inv.Qty - booking.Qty;
+                                    }
+                                }
+                            }
+                        }
+
+                        _context.Bookings.Add(booking);
                         _context.SaveChanges();
                         return new JsonResult(Ok());
                     }
                 }
-
                 return new JsonResult(UnprocessableEntity());
             }
-
             return new JsonResult(Ok());
         }
     }
